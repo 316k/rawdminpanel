@@ -18,12 +18,14 @@ class Rawdmin {
      * @param array $columns DB Columns to use
      * @param String $view The view/{$view}.php to use as html template
      */
-    public function view($table, array $columns, $view) {
+    public function view($table, array $columns, $view, array $readonly = array()) {
         $sql = "SELECT ";
         
+        $i = 0;
         foreach($columns as $index => $column) {
             $sql .= $column;
-            $sql .= ($index == count($columns) - 1) ? '' : ',';
+            $sql .= ($i == count($columns) - 1) ? '' : ',';
+            $i++;
         }
         $sql .= " FROM `$table`";
 
@@ -35,7 +37,11 @@ class Rawdmin {
         // Fill $data
         foreach($raw as $index => $row) {
             foreach($columns as $column) {
-                $data[$index][$column] = array('column' => $row[$column], 'type' => $this->type($table, $column));
+                $data[$index][$column] = array('column' => $row[$column],
+                                               'type' => in_array($column, $readonly) ? 'readonly' : $this->type($table, $column));
+                if($data[$index][$column]['type'] == 'enum') {
+                    $data[$index][$column]['options'] = $this->enum_options($table, $column);
+                }
             }
         }
         
@@ -63,14 +69,14 @@ class Rawdmin {
         $type = "";
         
         // Parse type
-        if(preg_match("#int#i", $data['Type'])) {
+        if(preg_match("#^tinyint\(1\)$#i", $data['Type'])) {
+            $type = 'boolean';
+        } elseif(preg_match("#int#i", $data['Type'])) {
             $type = 'int';
         } elseif(preg_match("#char|text#i", $data['Type'])) {
             $type = 'string';
         } elseif(preg_match("#float|double|real#i", $data['Type'])) {
             $type = 'float';
-        } elseif(preg_match("#boolean#i", $data['Type'])) {
-            $type = 'boolean';
         } elseif(preg_match("#^enum#i", $data['Type'])) {
             $type = 'enum';
         } elseif(preg_match("#blob#i", $data['Type'])) {
@@ -82,6 +88,30 @@ class Rawdmin {
         }
         
         return $type;
+    }
+    
+    /**
+     * @param String $table
+     * @param String $column
+     * @return String The type of column, one of : (int, float, boolean, string, enum, date, blob)
+     */
+    private function enum_options($table, $column) {
+        $query = $this->database->prepare("SHOW COLUMNS FROM `$table` WHERE `Field`=?");
+        $query->execute(array($column));
+        $data = $query->fetch();
+        
+        $options = array();
+        
+        $data['Type'] = str_replace(array("enum(", ")"), array("", ""), $data['Type']);
+        
+        $data['Type'] = explode(',', $data['Type']);
+        
+        foreach($data['Type'] as $option) {
+            $option = preg_replace("#^'(.*)'$#", "$1", $option);
+            $options[] = stripslashes($option);
+        }
+        
+        return $options;
     }
 
     public static function form_open($action = '', $method = 'POST') {
